@@ -16,6 +16,8 @@ class BDGGError(Exception):
 
 
 def pack_bdgg(version, uuid, ext, runnable, data):
+    if runnable is None:
+        runnable = ""
     ext_len = len(ext)
     runnable_len = len(runnable)
     data_comp = gzip.compress(data)
