@@ -2,17 +2,32 @@
 import os
 import sys
 import gzip
+import json
 import uuid
 import struct
+from hashlib import sha256
 from textwrap import dedent
 from collections import namedtuple
 from tempfile import NamedTemporaryFile
+from urllib.request import urlopen, Request
+from urllib.parse import urlsplit, parse_ql, urljoin, urlunsplit
+
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
 
 BDGG = namedtuple("BDGG", ("version", "uuid", "ext", "runnable", "data"))
 
 
 class BDGGError(Exception):
     pass
+
+
+def btoi(data, endian="big"):
+    return int.from_bytes(data, endian)
+
+
+def itob(n, length=1, endian="big"):
+    return int.to_bytes(n, length, endian)
 
 
 def pack_bdgg(version, uuid, ext, runnable, data):
@@ -59,72 +74,140 @@ def parse_bdgg(fp):
     return BDGG(version, uuid_obj, ext, runnable, data)
 
 
-def btoi(data, endian="big"):
-    return int.from_bytes(data, endian)
+def dec_sha(data, hexkey, hexiv):
+    key = bytes.fromhex(hexkey)
+    iv = bytes.fromhex(hexiv)
+
+    cipher = AES.new(
+        key=key,
+        mode=AES.MODE_CBC,
+        iv=iv
+    )
+
+    data = cipher.decrypt(bytes.fromhex(data))
+
+    return unpad(
+        padded_data=data,
+        block_size=AES.block_size,
+        style="pkcs7"
+    )
 
 
-def itob(n, length=1, endian="big"):
-    return int.to_bytes(n, length, endian)
+class BDGGServer:
+    def __init__(self, protocol, baseurl, fileid, token):
+        self.protocol = protocol
+        self.baseurl = baseurl
+        self.fileid = fileid
+        self.headers = {"Authorization": f"Bearer {token}"}
+
+    def geturl(self, path, query):
+        qrstr = "&".join([f"{x}={y}" for x, y in query.items()])
+
+        return urlunsplit((self.protocol, self.baseurl, path, qrstr, ""))
+
+    def request_key(self):
+        requrl = self.geturl("/api/v1/key", {"file_id": self.fileid})
+        req = Request(requrl, headers=self.headers)
+        res = urlopen(req)
+        rawdata = res.read()
+
+        try:
+            data = json.loads(rawdata)
+        except json.JSONError:
+            raise BDGGError("Malformed response from the server")
+    
+        if res.status != 200:
+            code = data['error']['code']
+            message = data['error']['message']
+            raise BDGGError(res.status, code, message)
+    
+        file = data['data']['file']
+        key = data['data']['key']
+    
+        return file, key
+
+    def download_file(self):
+        requrl = self.geturl(f"/download/{self.fileid}")
+        req = Request(requrl, headers=self.hearders)
+        res = urlopen(req)
+
+        if res.status != 200:
+            rawdata = res.read()
+            data = json.loads(rawdata)
+            code = data['error']['code']
+            message = data['error']['message']
+            raise BDGGError(res.status, code, message)
+
+        return res
+
+
+class BDGGHandler:
+    @classmethod
+    def on_filedownload(cls, raw_uuid, token, host, protocol):
+        raw_uuid = raw_uuid[0]
+        token = token[0]
+        host = host[0]
+        protocol = protocol[0]
+
+        try:
+            fileid = uuid.UUID(raw_uuid[0])
+        except ValueError:
+            raise BDGGError("Malformed UUID")
+
+        if protocol not in ["http", "https"]:
+            raise BDGGError("Invalid protocol")
+
+        server = BDGGServer(protocol, host, fileid, token)
+
+        file, key = server.request_key()
+        res = server.download_file()
+
+        bdgg = parse_bdgg(res)
+        decdata = dec_sha(bdgg.data, key['key'], key['iv'])
+
+        if sha256(decdata).hexdigest() != file['sha256']:
+            raise BDGGError("SHA256 hash mismatch!")
+
+        tf = NamedTemporaryFile(suffix=bdgg.ext)
+        tf.file.write(decdata)
+
+        if bdgg.runnable:
+            runnable = bdgg.runnable.format(tf.name)
+        else:
+            runnable = "xdg-open {}".format(tf.name)
+
+        os.system(runnable)
+
+    @classmethod
+    def handle(cls, url):
+        event, query = cls.parse(url)
+
+        handler = getattr(cls, f"on_{event.lower()}", None)
+
+        if handler is None:
+            raise BDGGError("Unknown request type")
+
+        try:
+            handler(**query)
+        except (TypeError, IndexError):
+            raise BDGGError("Malformed request")
+
+    @staticmethod
+    def parse(url):
+        split = urlsplit(url)
+        if split.scheme != "swubdgg":
+            raise BDGGError("Protocol Mismatch!")
+
+        event = split.path
+        query = parse_ql(split.query)
+
+        return event, query
 
 
 def main():
-    cmdname = sys.argv[0]
-    HELP = dedent(f"""
-        Usage: {cmdname} OPTION filename
-
-        Option can be one of the followings:
-          encrypt:
-            encrypt the given file to BDGG format.
-          decrypt:
-            decrypt the given file to original file.
-    """)
-    args = sys.argv[1:]
-
-    if len(args) != 2:
-        print(HELP)
-        exit()
-
-    opt = args[0]
-    filename = args[1]
-
-    if opt == "encrypt":
-        enc(filename)
-    elif opt == "decrypt":
-        dec(filename)
-    else:
-        print(HELP)
+    url = sys.argv[1]
+    BDGGHandler.handle(url)
     exit()
-
-
-def enc(filename):
-    data = open(filename, "rb").read()
-    uuid_obj = uuid.uuid4()
-    print(f"UUID is: {uuid_obj}")
-    ext = "." + filename.rsplit(".", 1)[-1]
-    runnable = input("Please enter the runnable command: ")
-
-    bdgg_enc = pack_bdgg(0, uuid_obj, ext, runnable, data)
-
-    with open(f"enc_{filename}.bdgg", "wb") as f:
-        f.write(bdgg_enc)
-
-    print("File encrypted at:", f"enc_{filename}.bdgg")
-
-
-def dec(filename):
-    fp = open(filename, "rb")
-    bdgg = parse_bdgg(fp)
-
-    print(f"UUID is: {bdgg.uuid}")
-
-    tf = NamedTemporaryFile(suffix=bdgg.ext)
-    tf.file.write(bdgg.data)
-
-    runnable = bdgg.runnable.format(tf.name)
-    print(f"running `{runnable}`...")
-    os.system(runnable)
-
-    print("Done!")
 
 
 if __name__ == "__main__":
