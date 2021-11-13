@@ -121,7 +121,7 @@ class BDGGServer:
 
         try:
             data = json.loads(rawdata)
-        except json.JSONError:
+        except json.JSONDecodeError:
             raise BDGGError("Malformed response from the server")
     
         if res.status != 200:
