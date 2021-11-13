@@ -6,11 +6,10 @@ import json
 import uuid
 import struct
 from hashlib import sha256
-from textwrap import dedent
 from collections import namedtuple
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen, Request
-from urllib.parse import urlsplit, parse_qs, urljoin, urlunsplit
+from urllib.parse import urlsplit, parse_qs, urlunsplit
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -98,17 +97,26 @@ class BDGGServer:
         self.protocol = protocol
         self.baseurl = baseurl
         self.fileid = fileid
-        self.headers = {"Authorization": f"Bearer {token}"}
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "BDGG-Client v0"
+        }
 
     def geturl(self, path, query):
         qrstr = "&".join([f"{x}={y}" for x, y in query.items()])
 
-        return urlunsplit((self.protocol, self.baseurl, path, qrstr, ""))
+        url = urlunsplit((self.protocol, self.baseurl, path, qrstr, ""))
+        print(url)
+
+        return url
 
     def request_key(self):
         requrl = self.geturl("/api/v1/key", {"file_id": self.fileid})
+        print("creating request")
         req = Request(requrl, headers=self.headers)
+        print("sending request")
         res = urlopen(req)
+        print("sex")
         rawdata = res.read()
 
         try:
@@ -150,7 +158,7 @@ class BDGGHandler:
         protocol = protocol[0]
 
         try:
-            fileid = uuid.UUID(raw_uuid[0])
+            fileid = uuid.UUID(raw_uuid)
         except ValueError:
             raise BDGGError("Malformed UUID")
 
@@ -182,6 +190,10 @@ class BDGGHandler:
     def handle(cls, url):
         event, query = cls.parse(url)
 
+        if query.get("uuid") is not None:
+            query['raw_uuid'] = query['uuid']
+            del query['uuid']
+
         handler = getattr(cls, f"on_{event.lower()}", None)
 
         if handler is None:
@@ -198,7 +210,7 @@ class BDGGHandler:
         if split.scheme != "swubdgg":
             raise BDGGError("Protocol Mismatch!")
 
-        event = split.path
+        event = split.netloc
         query = parse_qs(split.query)
 
         return event, query

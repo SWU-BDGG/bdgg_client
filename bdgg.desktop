@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=BDGG Scheme Handler
+Exec= sh -c '$HOME/.local/bin/bdgg %u'
+StartupNotify=false
+MimeType=x-scheme-handler/swubdgg;
