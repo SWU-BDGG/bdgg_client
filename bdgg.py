@@ -168,7 +168,7 @@ class BDGGHandler:
         if sha256(decdata).hexdigest() != file['sha256']:
             raise BDGGError("SHA256 hash mismatch!")
 
-        tf = NamedTemporaryFile(suffix=bdgg.ext)
+        tf = NamedTemporaryFile(suffix="."+bdgg.ext)
         tf.file.write(decdata)
 
         if bdgg.runnable:
