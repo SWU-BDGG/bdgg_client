@@ -10,7 +10,7 @@ from textwrap import dedent
 from collections import namedtuple
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen, Request
-from urllib.parse import urlsplit, parse_ql, urljoin, urlunsplit
+from urllib.parse import urlsplit, parse_qs, urljoin, urlunsplit
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -199,7 +199,7 @@ class BDGGHandler:
             raise BDGGError("Protocol Mismatch!")
 
         event = split.path
-        query = parse_ql(split.query)
+        query = parse_qs(split.query)
 
         return event, query
 
