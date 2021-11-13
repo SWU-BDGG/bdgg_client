@@ -3,12 +3,14 @@ import os
 import sys
 import gzip
 import json
+import time
 import uuid
 import struct
+import requests
+from io import BytesIO
 from hashlib import sha256
 from collections import namedtuple
 from tempfile import NamedTemporaryFile
-from urllib.request import urlopen, Request
 from urllib.parse import urlsplit, parse_qs, urlunsplit
 
 from Crypto.Cipher import AES
@@ -104,30 +106,22 @@ class BDGGServer:
 
     def geturl(self, path, query={}):
         qrstr = "&".join([f"{x}={y}" for x, y in query.items()])
-
         url = urlunsplit((self.protocol, self.baseurl, path, qrstr, ""))
-        print(url)
-
         return url
 
     def request_key(self):
         requrl = self.geturl("/api/v1/key", {"file_id": self.fileid})
-        print("creating request")
-        req = Request(requrl, headers=self.headers)
-        print("sending request")
-        res = urlopen(req)
-        print("sex")
-        rawdata = res.read()
+        r = requests.get(requrl, headers=self.headers)
 
         try:
-            data = json.loads(rawdata)
+            data = r.json()
         except json.JSONDecodeError:
             raise BDGGError("Malformed response from the server")
     
-        if res.status != 200:
+        if r.status_code != 200:
             code = data['error']['code']
             message = data['error']['message']
-            raise BDGGError(res.status, code, message)
+            raise BDGGError(r.status_code, code, message)
     
         file = data['data']['file']
         key = data['data']['key']
@@ -136,17 +130,15 @@ class BDGGServer:
 
     def download_file(self):
         requrl = self.geturl(f"/download/{self.fileid}")
-        req = Request(requrl, headers=self.headers)
-        res = urlopen(req)
+        r = requests.get(requrl, headers=self.headers)
 
-        if res.status != 200:
-            rawdata = res.read()
-            data = json.loads(rawdata)
+        if r.status_code != 200:
+            data = r.json()
             code = data['error']['code']
             message = data['error']['message']
-            raise BDGGError(res.status, code, message)
+            raise BDGGError(r.status_code, code, message)
 
-        return res
+        return r
 
 
 class BDGGHandler:
@@ -168,9 +160,9 @@ class BDGGHandler:
         server = BDGGServer(protocol, host, fileid, token)
 
         file, key = server.request_key()
-        res = server.download_file()
+        r = server.download_file()
 
-        bdgg = parse_bdgg(res)
+        bdgg = parse_bdgg(BytesIO(r.content))
         decdata = dec_sha(bdgg.data, key['key'], key['iv'])
 
         if sha256(decdata).hexdigest() != file['sha256']:
@@ -185,6 +177,8 @@ class BDGGHandler:
             runnable = "xdg-open {}".format(tf.name)
 
         os.system(runnable)
+
+        time.sleep(1)
 
     @classmethod
     def handle(cls, url):
