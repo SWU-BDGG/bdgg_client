@@ -102,7 +102,7 @@ class BDGGServer:
             "User-Agent": "BDGG-Client v0"
         }
 
-    def geturl(self, path, query):
+    def geturl(self, path, query={}):
         qrstr = "&".join([f"{x}={y}" for x, y in query.items()])
 
         url = urlunsplit((self.protocol, self.baseurl, path, qrstr, ""))
@@ -136,7 +136,7 @@ class BDGGServer:
 
     def download_file(self):
         requrl = self.geturl(f"/download/{self.fileid}")
-        req = Request(requrl, headers=self.hearders)
+        req = Request(requrl, headers=self.headers)
         res = urlopen(req)
 
         if res.status != 200:
