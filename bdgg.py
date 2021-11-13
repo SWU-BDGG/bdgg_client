@@ -83,7 +83,7 @@ def dec_sha(data, hexkey, hexiv):
         iv=iv
     )
 
-    data = cipher.decrypt(bytes.fromhex(data))
+    data = cipher.decrypt(data)
 
     return unpad(
         padded_data=data,
